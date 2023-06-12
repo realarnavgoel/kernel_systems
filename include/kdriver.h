@@ -53,5 +53,13 @@ int kdriver_open(struct inode *, struct file *);
  */
 int kdriver_close(struct inode *, struct file *);
 
+/**
+ * @brief Memory map kdriver device file region per mmap() call
+ *        based on the MAP_OPC specified in offset field
+ * @param file
+ * @param vma
+ * @return 0 or -EINVAL, -EFAULT, -ENOMEM
+ */
+int kdriver_mmap(struct file *, struct vm_area_struct *vma);
 
 #endif /*! KDRIVER_H */

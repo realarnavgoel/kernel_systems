@@ -36,6 +36,7 @@ static int __init kdriver_init(void) {
     // Allocate char device
     priv->fops.open = &kdriver_open;
     priv->fops.release = &kdriver_close;
+    priv->fops.mmap = &kdriver_mmap;
     cdev_init(&(priv->cdev), &(priv->fops));
     rc = cdev_add(&(priv->cdev), priv->devt, 1);
     if (rc < 0) {
