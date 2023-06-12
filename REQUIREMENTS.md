@@ -1,4 +1,5 @@
-## Write a simple device driver to support the following device file operations
+### Requirements for kdriver
+## Write a character device driver to support the following device file operations
 - Open a file per user-defined context
   - Start a kthread that writes every 1usec RNG counter into user-defined context
   - Start a ktrhead that monitors every 1usec well-defined offset(s) for a value of 1
