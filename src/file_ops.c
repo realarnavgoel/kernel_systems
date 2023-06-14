@@ -70,7 +70,11 @@ int kdriver_open(struct inode *inode, struct file *fp) {
 
     mutex_lock(&priv->lock);
     // Allocate a physically contiguous region to simulate HW rsc
+#ifdef KDRIVER_CONFIG_VMALLOC
+    uctx->region = vmalloc(MAP_COUNTER_SIZE * sizeof(u8));
+#else
     uctx->region = kzalloc(MAP_COUNTER_SIZE, GFP_KERNEL);
+#endif
     if (!(uctx->region)) {
 	KDRV_LOG(ERR, FOPS, "Invalid kdriver counter rsc on file %p\n",
 		 fp);
@@ -108,7 +112,11 @@ unlock_free_mmlock_uctx:
     vfree(uctx->mm_lock);
     vfree(uctx);
 unlock_free_region:
+#ifdef KDRIVER_CONFIG_VMALLOC
+    vfree(uctx->region);
+#else
     kfree(uctx->region);
+#endif
 unlock_return:
     mutex_unlock(&priv->lock);
     fp->private_data = NULL;
@@ -129,7 +137,11 @@ int kdriver_close(struct inode *inode, struct file *fp) {
     }
 
     // Free physically contiguous region to simulate HW rsc
+#ifdef KDRIVER_CONFIG_VMALLOC
+    vfree(uctx->region);
+#else
     kfree(uctx->region);
+#endif
 
     // Free filep private context
     mutex_destroy(uctx->mm_lock);
@@ -146,18 +158,55 @@ int kdriver_close(struct inode *inode, struct file *fp) {
     return (rc); 
 }
 
-static int kdriver_mmap_counter_page(kdriver_ctx_rsc_t *uctx,
-				     struct vm_area_struct *vma) {
+__attribute__((unused)) static int kdriver_mmap_counter_page(unsigned long kvaddr, unsigned long kvsize,
+				     unsigned long uvaddr,
+		                     struct vm_area_struct *vma) {
+
+#ifdef KDRIVER_CONFIG_VMALLOC
+    // Assuming backend is vmalloc: Get physical address list from kvaddr
+    // remap_pfn_range() on a list of PA
+    unsigned long pfn = vmalloc_to_pfn((void *)kvaddr);
+    vma->vm_flags |= (VM_USERMAP); // This is a must-have for vmalloc area to mmap to userspace
+#else
     // Assuming backend is kzalloc: Get physical address from kvaddr
     // remap_pfn_range() on a single PA
-    unsigned long pfn = virt_to_pfn(uctx->region);
-    unsigned long size = (vma->vm_end - vma->vm_start);
+    unsigned long pfn = virt_to_pfn(kvaddr);
+#endif
     // Enforce vm->flags to be VM_LOCKED and VM_DONTFORK
     vma->vm_flags |= (VM_READ | VM_WRITE | VM_LOCKED | VM_DONTCOPY);
-    // Since do_mmap holds mm_sem, this is safe to call
+
     KDRV_LOG(DEBUG, FOPS, "Mapping vma_start %lx pfn %lx size %ld\n",
-		    vma->vm_start, pfn, size);
-    return (remap_pfn_range(vma, vma->vm_start, pfn, size, vm_get_page_prot(vma->vm_flags)));
+	     uvaddr, pfn, kvsize);
+    // Since do_mmap holds mm_sem, this is safe to call
+    return (remap_pfn_range(vma, uvaddr, pfn, kvsize,
+			     vm_get_page_prot(vma->vm_flags)));
+}
+
+static int kdriver_mmap_counter_range(kdriver_ctx_rsc_t *uctx,
+				      struct vm_area_struct *vma) {
+    unsigned long start = (unsigned long)(uctx->region);
+#ifdef KDRIVER_CONFIG_VMALLOC
+    unsigned long size = (vma->vm_end - vma->vm_start);
+    unsigned long uvaddr = vma->vm_start;
+    unsigned long chunk_sz = PAGE_SIZE;
+    int rc = 0;
+    while (size > 0) {
+	rc = kdriver_mmap_counter_page(start, chunk_sz, uvaddr, vma);
+	if (rc < 0) {
+	   KDRV_LOG(ERR, FOPS, "Unable to remap vma_start %lx size %ld. Reason %d\n",
+                    uvaddr, chunk_sz, rc);
+	   return (rc);
+	}
+
+	uvaddr += chunk_sz;
+	start += chunk_sz;
+	size -= chunk_sz;
+    }
+
+    return (0);
+#else
+    return (kdriver_mmap_counter_page(start, (vma->vm_end - vma->vm_start), vma->vm_start, vma));
+#endif
 }
 
 int kdriver_mmap(struct file *fp, struct vm_area_struct *vma) {
@@ -168,7 +217,7 @@ int kdriver_mmap(struct file *fp, struct vm_area_struct *vma) {
     switch(vma->vm_pgoff) {
         case MAP_OPC_COUNTER: {
 		mutex_lock(uctx->mm_lock);
-		rc = kdriver_mmap_counter_page(uctx, vma);
+		rc = kdriver_mmap_counter_range(uctx, vma);
 		mutex_unlock(uctx->mm_lock);
 	} break;
 	default: KDRV_LOG(ERR, FOPS, "Invalid opc: %lu for filep: %p\n",
@@ -176,8 +225,6 @@ int kdriver_mmap(struct file *fp, struct vm_area_struct *vma) {
 		 return (-EINVAL);
     }
 
-    // TODO: Assuming backend is vmalloc: Get physical address list from kvaddr
-    // remap_pfn_range() on a list of PA
     return (rc);
 }
 

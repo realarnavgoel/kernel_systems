@@ -2,7 +2,7 @@ PWD := ${CURDIR}
 ifneq ($(KERNELRELEASE),)
 SRC_DIR := src
 EXTRA_CFLAGS := -I$(src)/include -I$(src)/common
-ccflags-y += -g -O3 -Wall -Werror
+ccflags-y += -g -O3 -Wall -Werror -DKDRIVER_CONFIG_VMALLOC
 obj-m += kdriver.o 
 kdriver-y := ${SRC_DIR}/driver.o ${SRC_DIR}/file_ops.o
 
